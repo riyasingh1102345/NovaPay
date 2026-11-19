@@ -4,7 +4,7 @@ import sqlite3
 from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
-app = FastAPI(title="NovaPay — Target Web Application")
+app = FastAPI(title="NovaPay Cloud — Production Portal")
 
 conn = sqlite3.connect(":memory:", check_same_thread=False)
 conn.execute("CREATE TABLE accounts (id INTEGER PRIMARY KEY, owner TEXT, tier TEXT, balance REAL)")
@@ -42,119 +42,126 @@ def safe_eval_math(expr: str) -> float:
     return _eval(tree.body)
 
 
-CHAOS_STATE = {
-    "cwe_95_rce": True,
-    "cwe_89_sqli": True,
-    "cwe_693_headers": True,
-}
+def detect_active_flaws() -> dict:
+    with open(__file__, "r", encoding="utf-8") as f:
+        code = f.read()
+    # Check only the active route implementations at the bottom of the file
+    active_section = code.split("# --- ACTIVE PRODUCTION ENDPOINTS ---")[-1]
+    return {
+        "cwe_95": "eval(" in active_section,
+        "cwe_89": "f\"SELECT" in active_section or "f'SELECT" in active_section,
+    }
 
 
 @app.middleware("http")
 async def security_headers_middleware(request: Request, call_next):
     response = await call_next(request)
-    if not CHAOS_STATE["cwe_693_headers"]:
-        response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
-        response.headers["Content-Security-Policy"] = "default-src 'self' 'unsafe-inline'"
-        response.headers["X-Frame-Options"] = "DENY"
-        response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
+    response.headers["Content-Security-Policy"] = "default-src 'self' 'unsafe-inline'"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-Content-Type-Options"] = "nosniff"
     return response
 
 
 @app.get("/", response_class=HTMLResponse)
 def dashboard():
-    rce_on = CHAOS_STATE["cwe_95_rce"]
-    sqli_on = CHAOS_STATE["cwe_89_sqli"]
-    hdr_on = CHAOS_STATE["cwe_693_headers"]
-    total_bugs = sum([rce_on, sqli_on, hdr_on])
+    flaws = detect_active_flaws()
+    active_count = sum(flaws.values())
 
-    status_badge = (
-        f'<span class="badge bad">● {total_bugs} Active Vulnerabilities</span>'
-        if total_bugs > 0
-        else '<span class="badge ok">✓ All Vulnerabilities Healed</span>'
-    )
+    if active_count > 0:
+        return HTMLResponse(
+            status_code=503,
+            content="""
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+              <meta charset="UTF-8" />
+              <meta http-equiv="refresh" content="4" />
+              <title>503 Service Crashed — NovaPay Cloud</title>
+              <style>
+                * { box-sizing: border-box; margin: 0; padding: 0; }
+                body { font-family: 'Inter', system-ui, sans-serif; background: #09090b; color: #fafafa; display: grid; place-items: center; min-height: 100vh; padding: 24px; }
+                .crash-box { max-width: 640px; width: 100%; background: #18181b; border: 1px solid #dc2626; border-radius: 14px; padding: 32px; box-shadow: 0 20px 50px rgba(220, 38, 38, 0.2); }
+                .pill { display: inline-block; background: #450a0a; color: #fca5a5; border: 1px solid #dc2626; padding: 4px 12px; border-radius: 99px; font-size: 12px; font-weight: 700; margin-bottom: 16px; }
+                h1 { font-size: 26px; font-weight: 700; color: #f87171; margin-bottom: 10px; }
+                p { font-size: 14px; color: #a1a1aa; line-height: 1.6; margin-bottom: 18px; }
+                .trace { background: #09090b; border: 1px solid #27272a; border-radius: 8px; padding: 14px; font-family: monospace; font-size: 12px; color: #fca5a5; line-height: 1.6; margin-bottom: 18px; }
+                .pulse { font-size: 12.5px; color: #fbbf24; font-weight: 600; }
+              </style>
+            </head>
+            <body>
+              <div class="crash-box">
+                <div class="pill">HTTP 503 • CRITICAL SYSTEM CRASH</div>
+                <h1>Web Application Crashed &amp; Offline</h1>
+                <p>NovaPay Production Portal experienced a critical security breach and emergency shutdown due to unvalidated code injection in <code>app.py</code>. All user endpoints are suspended until PatchBot deploys a verified fix.</p>
+                <div class="trace">
+                  FATAL [SecurityWatchdog]: Uncaught CWE-95 (Arbitrary eval() RCE) &amp; CWE-89 (SQL Injection) detected in runtime!<br>
+                  STATUS: Service Unavailable (503) — Production Traffic Halted.<br>
+                  ACTION REQUIRED: Trigger PatchBot Remediation Agent on port 8000.
+                </div>
+                <div class="pulse">⟳ Auto-checking recovery status every 4 seconds... (Will restore automatically once PatchBot heals app.py)</div>
+              </div>
+            </body>
+            </html>
+            """,
+        )
 
-    return f"""
+    return """
     <!DOCTYPE html>
     <html lang="en">
     <head>
       <meta charset="UTF-8" />
-      <title>NovaPay Cloud — Live Target App</title>
+      <title>NovaPay Cloud — Production Portal</title>
       <style>
-        * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-        body {{ font-family: system-ui, sans-serif; background: #f8fafc; color: #0f172a; padding: 32px 20px; }}
-        .container {{ max-width: 960px; margin: 0 auto; }}
-        header {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; padding-bottom: 18px; border-bottom: 1px solid #e2e8f0; }}
-        h1 {{ font-size: 22px; font-weight: 700; }}
-        .sub {{ font-size: 13.5px; color: #64748b; margin-top: 3px; }}
-        .badge {{ padding: 6px 12px; border-radius: 99px; font-size: 12.5px; font-weight: 600; }}
-        .badge.bad {{ background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; }}
-        .badge.ok {{ background: #ecfdf5; color: #047857; border: 1px solid #a7f3d0; }}
-        .chaos-panel {{ background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 20px; margin-bottom: 22px; }}
-        .chaos-head {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }}
-        .chaos-grid {{ display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }}
-        .bug-card {{ border: 1px solid #e2e8f0; border-radius: 9px; padding: 14px; background: #f8fafc; }}
-        .bug-card.active {{ border-color: #fca5a5; background: #fef2f2; }}
-        .bug-title {{ font-size: 13px; font-weight: 700; margin-bottom: 4px; }}
-        .bug-desc {{ font-size: 12px; color: #475569; margin-bottom: 12px; }}
-        .btn {{ padding: 8px 13px; border-radius: 7px; font-size: 12.5px; font-weight: 600; cursor: pointer; border: 1px solid #cbd5e1; background: #fff; color: #0f172a; }}
-        .btn-danger {{ background: #dc2626; color: #fff; border-color: #dc2626; }}
-        .btn-heal {{ background: #047857; color: #fff; border-color: #047857; }}
-        .app-grid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }}
-        .card {{ background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 20px; }}
-        input {{ width: 100%; padding: 9px 11px; border: 1px solid #cbd5e1; border-radius: 7px; font-size: 13px; margin: 10px 0; }}
-        .exploit-tip {{ font-family: monospace; font-size: 11.5px; background: #f1f5f9; padding: 7px 10px; border-radius: 6px; margin-top: 8px; }}
-        pre#output {{ margin-top: 20px; background: #0f172a; color: #e2e8f0; padding: 16px; border-radius: 10px; font-size: 12.5px; overflow-x: auto; min-height: 90px; }}
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: system-ui, sans-serif; background: #f8fafc; color: #0f172a; padding: 32px 20px; }
+        .container { max-width: 960px; margin: 0 auto; }
+        header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; padding-bottom: 18px; border-bottom: 1px solid #e2e8f0; }
+        h1 { font-size: 22px; font-weight: 700; }
+        .sub { font-size: 13.5px; color: #64748b; margin-top: 3px; }
+        .badge.ok { padding: 6px 12px; border-radius: 99px; font-size: 12.5px; font-weight: 600; background: #ecfdf5; color: #047857; border: 1px solid #a7f3d0; }
+        .inject-panel { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 20px; margin-bottom: 22px; display: flex; justify-content: space-between; align-items: center; }
+        .btn { padding: 8px 14px; border-radius: 7px; font-size: 12.5px; font-weight: 600; cursor: pointer; border: 1px solid #cbd5e1; background: #fff; color: #0f172a; }
+        .btn-danger { background: #dc2626; color: #fff; border-color: #dc2626; }
+        .app-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        .card { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 20px; }
+        input { width: 100%; padding: 9px 11px; border: 1px solid #cbd5e1; border-radius: 7px; font-size: 13px; margin: 10px 0; }
+        .exploit-tip { font-family: monospace; font-size: 11.5px; background: #f1f5f9; padding: 7px 10px; border-radius: 6px; margin-top: 8px; }
+        pre#output { margin-top: 20px; background: #0f172a; color: #e2e8f0; padding: 16px; border-radius: 10px; font-size: 12.5px; overflow-x: auto; min-height: 90px; }
       </style>
     </head>
     <body>
       <div class="container">
         <header>
           <div>
-            <h1>NovaPay Cloud — Live Target Application</h1>
-            <p class="sub">Toggle security vulnerabilities live and test PatchBot's autonomous remediation.</p>
+            <h1>NovaPay Cloud — Production Portal</h1>
+            <p class="sub">Monitored externally by PatchBot Autonomous Security Agent.</p>
           </div>
-          {status_badge}
+          <span class="badge ok">✓ System Online &amp; Hardened (Protected by PatchBot)</span>
         </header>
 
-        <div class="chaos-panel">
-          <div class="chaos-head">
-            <strong>Chaos Fault-Injection Controls</strong>
-            <div style="display:flex;gap:8px;">
-              <form action="/chaos/inject-all" method="post"><button class="btn btn-danger" type="submit">Inject All Bugs</button></form>
-              <form action="/chaos/heal-all" method="post"><button class="btn btn-heal" type="submit">Heal All Bugs</button></form>
-            </div>
+        <div class="inject-panel">
+          <div>
+            <strong style="font-size:14.5px;">Simulate Production Breach &amp; Crash</strong>
+            <div style="font-size:12.5px;color:#64748b;margin-top:2px;">Injects CWE-95 &amp; CWE-89 vulnerabilities into app.py, triggering an immediate 503 Web Crash until PatchBot heals it.</div>
           </div>
-          <div class="chaos-grid">
-            <div class="bug-card {'active' if rce_on else ''}">
-              <div class="bug-title">CWE-95: Unsafe eval() RCE</div>
-              <div class="bug-desc">Status: <strong>{'INJECTED (Vulnerable)' if rce_on else 'PATCHED (AST Guarded)'}</strong></div>
-              <form action="/chaos/toggle/cwe_95_rce" method="post"><button class="btn" type="submit">{'Fix CWE-95' if rce_on else 'Inject CWE-95'}</button></form>
-            </div>
-            <div class="bug-card {'active' if sqli_on else ''}">
-              <div class="bug-title">CWE-89: SQL Injection</div>
-              <div class="bug-desc">Status: <strong>{'INJECTED (Raw SQL)' if sqli_on else 'PATCHED (Parameterized)'}</strong></div>
-              <form action="/chaos/toggle/cwe_89_sqli" method="post"><button class="btn" type="submit">{'Fix CWE-89' if sqli_on else 'Inject CWE-89'}</button></form>
-            </div>
-            <div class="bug-card {'active' if hdr_on else ''}">
-              <div class="bug-title">CWE-693: Missing Headers</div>
-              <div class="bug-desc">Status: <strong>{'INJECTED (No CSP/HSTS)' if hdr_on else 'PATCHED (Headers Active)'}</strong></div>
-              <form action="/chaos/toggle/cwe_693_headers" method="post"><button class="btn" type="submit">{'Fix Headers' if hdr_on else 'Inject Missing Headers'}</button></form>
-            </div>
-          </div>
+          <form action="/chaos/inject-flaws" method="post">
+            <button class="btn btn-danger" type="submit">Inject Bug &amp; Crash Web</button>
+          </form>
         </div>
 
         <div class="app-grid">
           <div class="card">
-            <h3>1. Account Balance Lookup (CWE-89)</h3>
-            <div class="exploit-tip">Payload: <strong>' OR '1'='1</strong></div>
+            <h3>1. Account Balance Lookup (Protected)</h3>
+            <div class="exploit-tip">Test payload: <strong>' OR '1'='1</strong></div>
             <form onsubmit="runTest(event, '/api/account', 'owner')">
               <input type="text" id="owner" value="' OR '1'='1" />
               <button class="btn" type="submit">Query Account</button>
             </form>
           </div>
           <div class="card">
-            <h3>2. Tax & Fee Calculator (CWE-95)</h3>
-            <div class="exploit-tip">Payload: <strong>__import__('os').getcwd()</strong></div>
+            <h3>2. Tax &amp; Fee Calculator (Protected)</h3>
+            <div class="exploit-tip">Test payload: <strong>__import__('os').getcwd()</strong></div>
             <form onsubmit="runTest(event, '/api/calc', 'formula')">
               <input type="text" id="formula" value="__import__('os').getcwd()" />
               <button class="btn" type="submit">Run Calculation</button>
@@ -165,57 +172,56 @@ def dashboard():
         <pre id="output">// Response telemetry will appear here...</pre>
       </div>
       <script>
-        async function runTest(e, endpoint, fieldId) {{
+        async function runTest(e, endpoint, fieldId) {
           e.preventDefault();
           const formData = new URLSearchParams();
           formData.append(fieldId, document.getElementById(fieldId).value);
-          const res = await fetch(endpoint, {{ method: 'POST', body: formData }});
+          const res = await fetch(endpoint, { method: 'POST', body: formData });
           document.getElementById('output').textContent = JSON.stringify(await res.json(), null, 2);
-        }}
+        }
       </script>
     </body>
     </html>
     """
 
 
-@app.post("/chaos/toggle/{bug_key}")
-def toggle_bug(bug_key: str):
-    if bug_key in CHAOS_STATE:
-        CHAOS_STATE[bug_key] = not CHAOS_STATE[bug_key]
-    return RedirectResponse("/", status_code=303)
+@app.post("/chaos/inject-flaws")
+def inject_flaws():
+    with open(__file__, "r", encoding="utf-8") as f:
+        code = f.read()
 
+    marker = "# --- ACTIVE PRODUCTION ENDPOINTS ---"
+    head, _ = code.split(marker, 1)
 
-@app.post("/chaos/inject-all")
-def inject_all():
-    for k in CHAOS_STATE:
-        CHAOS_STATE[k] = True
-    return RedirectResponse("/", status_code=303)
-
-
-@app.post("/chaos/heal-all")
-def heal_all():
-    for k in CHAOS_STATE:
-        CHAOS_STATE[k] = False
-    return RedirectResponse("/", status_code=303)
-
-
+    vulnerable_endpoints = f"""{marker}
 @app.post("/api/account")
 def get_account(owner: str = Form(...)):
-    if CHAOS_STATE["cwe_89_sqli"]:
-        query = f"SELECT id, owner, tier, balance FROM accounts WHERE owner = '{owner}'"
-        rows = conn.execute(query).fetchall()
-        return {"mode": "VULNERABLE (CWE-89)", "query": query, "leaked_records": rows}
+    query = f"SELECT id, owner, tier, balance FROM accounts WHERE owner = '{{owner}}'"
+    rows = conn.execute(query).fetchall()
+    return {{"mode": "VULNERABLE (CWE-89)", "query": query, "leaked_records": rows}}
+
+
+@app.post("/api/calc")
+def calc_fee(formula: str = Form(...)):
+    try:
+        return {{"mode": "VULNERABLE (CWE-95)", "result": str(eval(formula))}}
+    except Exception as e:
+        return JSONResponse(status_code=400, content={{"error": str(e)}})
+"""
+    with open(__file__, "w", encoding="utf-8") as f:
+        f.write(head + vulnerable_endpoints)
+    return RedirectResponse("/", status_code=303)
+
+
+# --- ACTIVE PRODUCTION ENDPOINTS ---
+@app.post("/api/account")
+def get_account(owner: str = Form(...)):
     rows = conn.execute("SELECT id, owner, tier, balance FROM accounts WHERE owner = ?", (owner,)).fetchall()
     return {"mode": "PROTECTED (Parameterized SQL)", "matched_records": rows}
 
 
 @app.post("/api/calc")
 def calc_fee(formula: str = Form(...)):
-    if CHAOS_STATE["cwe_95_rce"]:
-        try:
-            return {"mode": "VULNERABLE (CWE-95)", "result": str(eval(formula))}
-        except Exception as e:
-            return JSONResponse(status_code=400, content={"error": str(e)})
     try:
         return {"mode": "PROTECTED (AST Safe Evaluator)", "result": safe_eval_math(formula)}
     except Exception as e:
